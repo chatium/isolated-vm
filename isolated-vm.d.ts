@@ -109,7 +109,7 @@ declare module "isolated-vm" {
 
 		/**
 		 * Start profiling against the isolate with a specific title
-		 * 
+		 *
 		 * @param title the profile title
 		 */
 		startCpuProfiler(title: string): void;
@@ -120,8 +120,8 @@ declare module "isolated-vm" {
 		 * than one cpu profiles because isolate can be run in different
 		 * threads. The `ThreadCpuProfile` contains the `thread_id` that
 		 * the isolate was running in.
-		 * 
-		 * @param title 
+		 *
+		 * @param title
 		 */
 		stopCpuProfiler(title: string): Promise<ThreadCpuProfile[]>;
 
@@ -236,7 +236,47 @@ declare module "isolated-vm" {
 		 * reference to the context.
 		 */
 		release(): void;
+
+		/**
+		 * Wrapper for v8::Context::SetPromiseHooks
+		 * Intended to run inside eval() of this Context, when this context passed as argument
+		 * @see https://docs.google.com/document/d/1rda3yKGHimKIhg5YeoAmCOtyURgsbTH_qaYR79FELlk/edit
+		 * @param init_hook
+		 * @param before_hook
+		 * @param after_hook
+		 * @param resolve_hook
+		 */
+		setPromiseHooksSync(
+			init_hook: PromiseHookInit,
+			before_hook: PromiseHookBefore,
+			after_hook: PromiseHookAfter,
+			resolve_hook: PromiseHookResolve,
+		): void
 	}
+
+	/**
+	 * PromiseHookInit is called when a new promise is created.
+	 * When a new promise is created as part of the chain in the case of Promise.then or
+	 * in the intermediate promises created by Promise.{race, all}/AsyncFunctionAwait,
+	 * we pass the parent promise otherwise we pass undefined.
+	 */
+	type PromiseHookInit = (promise: Promise<unknown>, parentPromise?: Promise<unknown>) => void
+
+	/**
+	 * PromiseHookBefore is called at the beginning of the PromiseReactionJob.
+	 */
+	type PromiseHookBefore = (promise: Promise<unknown>) => void
+
+	/**
+	 * PromiseHookAfter is called right at the end of the PromiseReactionJob.
+	 */
+	type PromiseHookAfter = (promise: Promise<unknown>) => void
+
+	/**
+	 * PromiseHookResolve is called at the beginning of resolve or reject
+	 * function defined by CreateResolvingFunctions.
+	 */
+	type PromiseHookResolve = (promise: Promise<unknown>) => void
 
 	export type ContextEvalOptions = RunOptions & ScriptOrigin & TransferOptions;
 	export type ContextEvalClosureOptions = RunOptions & ScriptOrigin & TransferOptionsBidirectional;
