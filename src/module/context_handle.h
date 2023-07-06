@@ -26,6 +26,14 @@ class ContextHandle : public TransferableHandle {
 			v8::MaybeLocal<v8::Object> maybe_options
 		) -> v8::Local<v8::Value>;
 
+		template <int Async>
+		auto SetPromiseHooks(
+		    v8::Local<v8::Function> init_hook,
+		    v8::Local<v8::Function> before_hook,
+            v8::Local<v8::Function> after_hook,
+            v8::Local<v8::Function> resolve_hook
+        ) -> void;
+
 	private:
 		RemoteHandle<v8::Context> context;
 		RemoteHandle<v8::Value> global;

@@ -44,9 +44,23 @@ auto ContextHandle::Definition() -> Local<FunctionTemplate> {
 		"evalClosure", MemberFunction<decltype(&ContextHandle::EvalClosure<1>), &ContextHandle::EvalClosure<1>>{},
 		"evalClosureIgnored", MemberFunction<decltype(&ContextHandle::EvalClosure<2>), &ContextHandle::EvalClosure<2>>{},
 		"evalClosureSync", MemberFunction<decltype(&ContextHandle::EvalClosure<0>), &ContextHandle::EvalClosure<0>>{},
+		"setPromiseHooksSync", MemberFunction<decltype(&ContextHandle::SetPromiseHooks<0>), &ContextHandle::SetPromiseHooks<0>>{},
 		"global", MemberAccessor<decltype(&ContextHandle::GlobalGetter), &ContextHandle::GlobalGetter>{},
 		"release", MemberFunction<decltype(&ContextHandle::Release), &ContextHandle::Release>{}
 	));
+}
+
+template <int Async>
+auto ContextHandle::SetPromiseHooks(
+    v8::Local<v8::Function> init_hook,
+    v8::Local<v8::Function> before_hook,
+    v8::Local<v8::Function> after_hook,
+    v8::Local<v8::Function> resolve_hook
+) -> void {
+    if (!context) {
+        throw RuntimeGenericError("Context is released");
+    }
+    context.Deref()->SetPromiseHooks(init_hook, before_hook, after_hook, resolve_hook);
 }
 
 auto ContextHandle::TransferOut() -> std::unique_ptr<Transferable> {
