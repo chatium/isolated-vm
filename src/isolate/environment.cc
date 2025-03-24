@@ -30,8 +30,31 @@ static auto GetStackBase() -> void* {
 	pthread_t self = pthread_self();
 	return (void*)((char*)pthread_get_stackaddr_np(self) - pthread_get_stacksize_np(self));
 }
+#elif defined __OpenBSD__
+#include <pthread_np.h>
+static auto GetStackBase() -> void* {
+        pthread_t self = pthread_self();
+        stack_t ss;
+        void* base = nullptr;
+        if (pthread_stackseg_np(self, &ss) == 0) {
+                base = (void*)((char*)ss.ss_sp - ss.ss_size);
+        }
+	return base;
+#elif defined __FreeBSD__
+#include <pthread_np.h>
+static auto GetStackBase() -> void* {
+  pthread_t self = pthread_self();
+  pthread_attr_t attrs;
+  void* base = nullptr;
+  if (pthread_attr_init(&attrs) == 0) {
+    pthread_attr_get_np(self, &attrs);
+    size_t size;
+    pthread_attr_getstack(&attrs, &base, &size);
+    pthread_attr_destroy(&attrs);
+  }
+  return base;
+}
 #elif defined __unix__
-#define _GNU_SOURCE
 static auto GetStackBase() -> void* {
 	pthread_t self = pthread_self();
 	pthread_attr_t attrs;
@@ -55,6 +78,10 @@ namespace ivm {
 
 std::atomic<size_t> detail::IsolateSpecificSize{0};
 thread_suspend_handle::initialize suspend_init{};
+
+namespace {
+	std::mutex isolate_allocator_mutex{};
+} // anonymous namespace
 
 /**
  * HeapCheck implementation
@@ -84,7 +111,7 @@ void IsolateEnvironment::HeapCheck::Epilogue() {
  * IsolateEnvironment implementation
  */
 void IsolateEnvironment::OOMErrorCallback(const char* location, bool is_heap_oom) {
-	if (RaiseCatastrophicError(IsolateEnvironment::GetCurrent()->error_handler, "Catastrophic out-of-memory error")) {
+	if (RaiseCatastrophicError(IsolateEnvironment::GetCurrent().error_handler, "Catastrophic out-of-memory error")) {
 		while (true) {
 			using namespace std::chrono_literals;
 			std::this_thread::sleep_for(100s);
@@ -118,15 +145,15 @@ void IsolateEnvironment::OOMErrorCallback(const char* location, bool is_heap_oom
 }
 
 void IsolateEnvironment::PromiseRejectCallback(PromiseRejectMessage rejection) {
-	auto* that = IsolateEnvironment::GetCurrent();
-	assert(that->isolate == Isolate::GetCurrent());
+	auto& that = IsolateEnvironment::GetCurrent();
+	assert(that.isolate == Isolate::GetCurrent());
 	// TODO: Revisit this in version 4.x?
 	auto event = rejection.GetEvent();
 	if (event == kPromiseRejectWithNoHandler) {
-		that->unhandled_promise_rejections.emplace_back(that->isolate, rejection.GetPromise());
-		that->unhandled_promise_rejections.back().SetWeak();
+		that.unhandled_promise_rejections.emplace_back(that.isolate, rejection.GetPromise());
+		that.unhandled_promise_rejections.back().SetWeak();
 	} else if (event == kPromiseHandlerAddedAfterReject) {
-		that->PromiseWasHandled(rejection.GetPromise());
+		that.PromiseWasHandled(rejection.GetPromise());
 	}
 }
 
@@ -139,11 +166,11 @@ void IsolateEnvironment::PromiseWasHandled(v8::Local<v8::Promise> promise) {
 }
 
 auto IsolateEnvironment::CodeGenCallback(Local<Context> /*context*/, Local<Value> source) -> ModifyCodeGenerationFromStringsResult {
-	auto* that = IsolateEnvironment::GetCurrent();
+	auto& that = IsolateEnvironment::GetCurrent();
 	// This heuristic could be improved by looking up how much `timeout` this isolate has left and
 	// returning early in some cases
 	ModifyCodeGenerationFromStringsResult result;
-	if (source->IsString() && static_cast<size_t>(source.As<String>()->Length()) > static_cast<size_t>(that->memory_limit / 8)) {
+	if (source->IsString() && static_cast<size_t>(source.As<String>()->Length()) > static_cast<size_t>(that.memory_limit / 8)) {
 		return result;
 	}
 	result.codegen_allowed = true;
@@ -317,7 +344,7 @@ IsolateEnvironment::IsolateEnvironment() :
 	scheduler{in_place<UvScheduler>{}, *this},
 	executor{*this},
 	nodejs_isolate{true} {}
-	
+
 
 IsolateEnvironment::IsolateEnvironment(UvScheduler& default_scheduler) :
 	scheduler{in_place<IsolatedScheduler>{}, *this, default_scheduler},
@@ -351,8 +378,11 @@ void IsolateEnvironment::IsolateCtor(size_t memory_limit_in_mb, shared_ptr<v8::B
 		startup_data.raw_size = snapshot_length;
 	}
 	task_runner = std::make_shared<IsolateTaskRunner>(holder.lock()->GetIsolate());
-	isolate = Isolate::Allocate();
-	PlatformDelegate::RegisterIsolate(isolate, &*scheduler);
+	{
+		std::lock_guard allocator_lock{isolate_allocator_mutex};
+		isolate = Isolate::Allocate();
+		PlatformDelegate::RegisterIsolate(isolate, &*scheduler);
+	}
 	Isolate::Initialize(isolate, create_params);
 
 	// Various callbacks
@@ -426,13 +456,16 @@ IsolateEnvironment::~IsolateEnvironment() {
 			ExchangeDefault(scheduler_lock->tasks);
 		}
 		{
-			// Dispose() will call destructors for external strings and array buffers, so this lock sets the
-			// "current" isolate for those C++ dtors to function correctly without locking v8
-			Executor::Scope lock{*this};
-			isolate->Dispose();
+			std::lock_guard allocator_lock{isolate_allocator_mutex};
+			{
+				// Dispose() will call destructors for external strings and array buffers, so this lock sets the
+				// "current" isolate for those C++ dtors to function correctly without locking v8
+				Executor::Scope lock{*this};
+				isolate->Dispose();
+			}
+			// Unregister from Platform
+			PlatformDelegate::UnregisterIsolate(isolate);
 		}
-		// Unregister from Platform
-		PlatformDelegate::UnregisterIsolate(isolate);
 		// Unreference from default isolate
 		executor.default_executor.env.owned_isolates->write()->erase({ dispose_wait, holder });
 	}
@@ -561,7 +594,7 @@ void IsolateEnvironment::RemoveWeakCallback(Persistent<Value>* handle) {
 }
 
 void AdjustRemotes(int delta) {
-	IsolateEnvironment::GetCurrent()->AdjustRemotes(delta);
+	IsolateEnvironment::GetCurrent().AdjustRemotes(delta);
 }
 
 auto RaiseCatastrophicError(RemoteHandle<Function>& handler, const char* message) -> bool {

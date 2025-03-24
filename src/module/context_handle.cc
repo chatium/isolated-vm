@@ -127,10 +127,10 @@ class EvalRunner : public CodeCompilerHolder, public ThreePhaseTask {
 
 		void Phase2() final {
 			// Load script in and compile
-			auto* isolate = IsolateEnvironment::GetCurrent();
+			auto& isolate = IsolateEnvironment::GetCurrent();
 			auto context = this->context.Deref();
 			Context::Scope context_scope{context};
-			IsolateEnvironment::HeapCheck heap_check{*isolate, true};
+			IsolateEnvironment::HeapCheck heap_check{isolate, true};
 			auto source = GetSource();
 			auto script = RunWithAnnotatedErrors([&]() {
 				return Unmaybe(ScriptCompiler::Compile(context, source.get()));
@@ -195,10 +195,10 @@ class EvalClosureRunner : public CodeCompilerHolder, public ThreePhaseTask {
 
 		void Phase2() final {
 			// Setup isolate's context
-			auto* isolate = IsolateEnvironment::GetCurrent();
+			auto& isolate = IsolateEnvironment::GetCurrent();
 			auto context = this->context.Deref();
 			Context::Scope context_scope{context};
-			IsolateEnvironment::HeapCheck heap_check{*isolate, true};
+			IsolateEnvironment::HeapCheck heap_check{isolate, true};
 
 			// Generate $0 ... $N argument names
 			std::vector<Local<String>> argument_names;
@@ -211,7 +211,7 @@ class EvalClosureRunner : public CodeCompilerHolder, public ThreePhaseTask {
 			// Invoke `new Function` to compile script
 			auto source = GetSource();
 			auto function = RunWithAnnotatedErrors([&]() {
-				return Unmaybe(ScriptCompiler::CompileFunctionInContext(
+				return Unmaybe(ScriptCompiler::CompileFunction(
 					context, source.get(),
 					argument_names.size(), argument_names.empty() ? nullptr : &argument_names[0],
 					0, nullptr

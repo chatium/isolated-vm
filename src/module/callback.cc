@@ -62,7 +62,7 @@ class InvokeRunner : public ThreePhaseTask {
 		void Phase2() final {
 			// Setup context
 			auto* isolate = Isolate::GetCurrent();
-			auto& env = *IsolateEnvironment::GetCurrent();
+			auto& env = IsolateEnvironment::GetCurrent();
 			auto context = Deref(data.context);
 			Context::Scope context_scope{context};
 			auto fn = Deref(data.callback);
@@ -104,7 +104,14 @@ CallbackTransferable::CallbackTransferable(Local<Function> data) :
 	CallbackTransferable{data, Isolate::GetCurrent()->GetCurrentContext()} {}
 
 CallbackTransferable::CallbackTransferable(Local<Function> fn, Local<Context> context) : data{
-	HandleCast<std::string>(fn->GetDebugName()),
+	[&]() {
+		const auto name = fn->GetDebugName();
+		if (name->IsString()) {
+			return std::optional{HandleCast<std::string>(name)};
+		} else {
+			return std::optional<std::string>{};
+		}
+	}(),
 	HandleCast<int>(Unmaybe(fn->Get(context, StringTable::Get().length))),
 	RemoteHandle<Function>{fn},
 	RemoteHandle<Context>{context},
@@ -118,7 +125,9 @@ auto CallbackTransferable::TransferIn() -> Local<Value> {
 	auto context = isolate->GetCurrentContext();
 	auto external = MakeExternal<CallbackHandle::Data>(data);
 	auto fn = Unmaybe(Function::New(context, Invoke, external, data.length, ConstructorBehavior::kThrow));
-	fn->SetName(HandleCast<Local<String>>(data.name));
+	if (data.name) {
+		fn->SetName(HandleCast<Local<String>>(*data.name));
+	}
 	return fn;
 }
 

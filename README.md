@@ -1,6 +1,6 @@
 [![npm version](https://badgen.now.sh/npm/v/isolated-vm)](https://www.npmjs.com/package/isolated-vm)
 [![isc license](https://badgen.now.sh/npm/license/isolated-vm)](https://github.com/laverdet/isolated-vm/blob/main/LICENSE)
-[![travis build](https://badgen.now.sh/travis/laverdet/isolated-vm/main)](https://app.travis-ci.com/github/laverdet/isolated-vm)
+[![github action](https://github.com/laverdet/isolated-vm/actions/workflows/build.yml/badge.svg)](https://github.com/laverdet/isolated-vm/actions/workflows/build.yml)
 [![npm downloads](https://badgen.now.sh/npm/dm/isolated-vm)](https://www.npmjs.com/package/isolated-vm)
 
 isolated-vm -- Access to multiple isolates in nodejs
@@ -12,6 +12,32 @@ isolated-vm -- Access to multiple isolates in nodejs
 allows you to create JavaScript environments which are completely *isolated* from each other. This
 can be a powerful tool to run code in a fresh JavaScript environment completely free of extraneous
 capabilities provided by the nodejs runtime.
+
+
+PROJECT STATUS
+--------------
+
+`isolated-vm` is currently in *maintenance mode*. New features are not actively being added but
+existing features and new versions of nodejs are supported as possible. There are some major
+architectural changes which need to be added to improve the stability and security of the project. I
+don't have as much spare time as I did when I started this project, so there is not currently any
+plan for these improvements.
+
+#### Wishlist
+
+1) Multi-process architecture. v8 is *not* resilient to out of memory conditions and is unable to
+gracefully unwind from these errors. Therefore it is possible, and even common, to crash a process
+with poorly-written or hostile software. I implemented a band-aid for this with the
+`onCatastrophicError` callback which quarantines a corrupted isolate, but it is not reliable.
+
+2) Bundled v8 version. nodejs uses a patched version of v8 which makes development of this module
+more difficult than it needs to be. For some reason they're also allowed to change the v8 ABI in
+semver minor releases as well, which causes issues for users while upgrading nodejs. Also, some
+Linux distributions strip "internal" symbols from their nodejs binaries which makes usage of this
+module impossible. I think the way to go is to compile and link against our own version of v8.
+
+CONTENTS
+--------
 
 * [Requirements](#requirements)
 * [Who Is Using isolated-vm](#who-is-using-isolated-vm)
@@ -25,13 +51,16 @@ capabilities provided by the nodejs runtime.
 	* [Reference](#class-reference-transferable)
 	* [ExternalCopy](#class-externalcopy-transferable)
 * [Examples](#examples)
+* [🚨 Frequently Asked Question 🚨](#frequently-asked-question)
 * [Alternatives](#alternatives)
 
 
 REQUIREMENTS
 ------------
 
-This project requires nodejs version 10.4.0 (or later).
+This project requires nodejs version 16.x (or later).
+
+🚨 If you are using a version of nodejs 20.x or later, you must pass `--no-node-snapshot` to `node`.
 
 Furthermore, to install this module you will need a compiler installed. If you run into errors while
 running `npm install isolated-vm` it is likely you don't have a compiler set up, or your compiler is
@@ -42,6 +71,7 @@ too old.
 * Alpine users should run: `sudo apk add python3 make g++`
 * Amazon Linux AMI users should run: `sudo yum install gcc72 gcc72-c++`
 * Arch Linux users should run: `sudo pacman -S make gcc python`
+* Red Hat users should run: `sudo dnf install python3 make gcc gcc-c++ zlib-devel brotli-devel openssl-devel`
 
 
 WHO IS USING ISOLATED-VM
@@ -81,12 +111,6 @@ looking for entries such as "update V8 to 9.1.269.36 (Michaël Zasso) #38273". H
 have usually been 3-5 of these updates within a single nodejs LTS release cycle. It is *not*
 recommended to use odd-numbered nodejs releases since these frequently break ABI and API
 compatibility and isolated-vm doesn't aim to be compatible with bleeding edge v8.
-
-Against potentially hostile code you should also consider turning on [v8 untrusted code
-mitigations](https://v8.dev/docs/untrusted-code-mitigations), which helps address the class of
-speculative execution attacks known as Spectre and Meltdown. You can enable this feature by running
-`node` with the `--untrusted-code-mitigations` flag. This feature comes with a slight performance
-cost and must be enabled per-process, therefore nodejs disables it by default.
 
 v8 is a relatively robust runtime, but there are always new and exciting ways to crash, hang,
 exploit, or otherwise disrupt a process with plain old JavaScript. Your application must be
@@ -151,7 +175,7 @@ contains can represent quite a large chunk of memory though you may want to expl
 	* `memoryLimit` *[number]* - Memory limit that this isolate may use, in MB. Note that this is more
 	of a guideline instead of a strict limit. A determined attacker could use 2-3 times this limit
 	before their script is terminated. Against non-hostile code this limit should be pretty close. The
-	default is 128MB and the mimium is 8MB.
+	default is 128MB and the minimum is 8MB.
 	* `inspector` *[boolean]* - Enable v8 inspector support in this isolate. See
 	`inspector-example.js` in this repository for an example of how to use this.
 	* `snapshot` *[ExternalCopy[ArrayBuffer]]* - This is an optional snapshot created from
@@ -168,17 +192,14 @@ contains can represent quite a large chunk of memory though you may want to expl
 * `warmup_script` *[string]* - Optional script to "warmup" the snapshot by triggering code
 compilation
 
-Isolate snapshots are a very useful feature if you intend to create several isolates running common
-libraries between them. A snapshot serializes the entire v8 heap including parsed code, global
-variables, and compiled code. Check out the examples section for tips on using this.
+🚨 You should not use this feature. It was never all that stable to begin with and has grown
+increasingly unstable due to changes in v8.
 
 **Note**: `createSnapshot` does not provide the same isolate protection like the rest of
 isolated-vm. If the script passed to `createSnapshot` uses too much memory the process will crash,
 and if it has an infinite loop it will stall the process. Furthermore newer v8 features may simply
 fail when attempting to take a snapshot that uses them. It is best to snapshot code that only
 defines functions, class, and simple data structures.
-
-**Please note that versions of nodejs 10.4.0 - 10.9.0 may crash while using the snapshot feature.
 
 ##### `isolate.compileScript(code)` *[Promise](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise)*
 ##### `isolate.compileScriptSync(code)`
@@ -520,7 +541,7 @@ can then be quickly copied into any isolate without any extra thread synchroniza
 		isolate. This operation completes in constant time since it doesn't have to copy an arbitrarily
 		large object. This only applies to ArrayBuffer and TypedArray instances.
 
-Primitive values can be copied exactly as they are. Date objects will be copied as as Dates.
+Primitive values can be copied exactly as they are. Date objects will be copied as Dates.
 ArrayBuffers, TypedArrays, and DataViews will be copied in an efficient format. SharedArrayBuffers
 will simply copy a reference to the existing memory and when copied into another isolate the new
 SharedArrayBuffer will point to the same underlying data. After passing a SharedArrayBuffer to
@@ -702,6 +723,36 @@ hostile.run(context).catch(err => console.error(err));
 // RangeError: Array buffer allocation failed
 ```
 
+
+FREQUENTLY ASKED QUESTION
+-------------------------
+
+There is only 1 frequently asked question:
+
+"How do I pass a [module, function, object, library] into an isolate?"
+
+You don't! Isolates are `isolated`. An *isolate* is its own environment with its own heap which is
+*isolated* from all other **isolates**. It may help to think of the question in the context of a
+web browser. How would you pass a function from nodejs into Firefox? You can't, it is nonsense.
+
+Depending on the function you could just pass the code for the function directly into the isolate
+and execute it there. That's how a `<script />` tag works in our browser metaphor. This works for
+functions that don't need to do anything such as file access or network requests. Check out Webpack,
+Rollup, esbuild, etc for bundling solutions.
+
+If you want to perform operations on files, network, native modules, etc then you will need to set
+up some kind of shim delegate which can perform the operation within nodejs and pass the result back
+to your isolate. In the browser metaphor this would be like a REST call back to your service.
+
+Finally, and I'm not trying to be mean here, if this explanation doesn't make sense then you really
+should not be using this module. This is a low-level module which is just one piece of a very
+complicated problem. If your goal is to run code from untrusted sources then you *must* have a very
+comprehensive understanding of JavaScript. You should know where the ECMAScript specification ends
+and where the HTML, DOM, and other web specifications begin. You should be a security-focused
+hacker, otherwise you will almost certain make a company-ending mistake. This is not a module for
+the faint of heart. Turn back now!
+
+
 ALTERNATIVES
 ------------
 
@@ -719,6 +770,6 @@ isolated-vm. The table headers are defined as follows:
 | ---------------------------------------------------------------------------- | :----: | :-----------: | :------: | :-----------: | :------------: | :---------------: |
 | [vm](https://nodejs.org/api/vm.html)                                         |        |               |          |               |       ✅       |        ✅         |
 | [worker_threads](https://nodejs.org/api/worker_threads.html)                 |        |               |    ✅    |      ✅       |       ✅       |        ✅         |
-| [vm2](https://github.com/patriksimek/vm2)                                    |   ✅   |               |          |               |       ✅       |        ✅         |
+| [vm2](https://github.com/patriksimek/vm2)                                    |       |               |          |               |       ✅       |        ✅         |
 | [tiny-worker](https://github.com/avoidwork/tiny-worker)                      |        |               |    ✅    |               |       ✅       |                   |
 | isolated-vm                                                                  |   ✅   |       ✅      |    ✅    |      ✅       |                |        ✅         |
