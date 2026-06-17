@@ -185,6 +185,9 @@ contains can represent quite a large chunk of memory though you may want to expl
     are totally unrecoverable. If you receive this error you should log the error, stop serving
     requests, finish outstanding work, and end the process by calling `process.abort()`.
 
+*NOTE*: `snapshot` contains compiled machine code. That means you should not accept `snapshot`
+payloads from a user, otherwise they may be able to run arbitrary code.
+
 ##### `ivm.Isolate.createSnapshot(scripts, warmup_script)`
 * `scripts` *[array]*
 	* `code` *[string]* - Source code to set up this snapshot
@@ -749,7 +752,7 @@ should not be using this module. This is a low-level module which is just one pi
 complicated problem. If your goal is to run code from untrusted sources then you *must* have a very
 comprehensive understanding of JavaScript. You should know where the ECMAScript specification ends
 and where the HTML, DOM, and other web specifications begin. You should be a security-focused
-hacker, otherwise you will almost certain make a company-ending mistake. This is not a module for
+hacker, otherwise you will almost certainly make a company-ending mistake. This is not a module for
 the faint of heart. Turn back now!
 
 

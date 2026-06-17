@@ -3,18 +3,18 @@
 		'default_configuration': 'Release',
 		'configurations': {
 			'Common': {
-				'cflags_cc': [ '-std=c++17', '-g', '-Wno-unknown-pragmas' ],
+				'cflags_cc': [ '-std=c++20', '-g', '-Wno-unknown-pragmas' ],
 				'cflags_cc!': [ '-fno-exceptions' ],
 				'include_dirs': [ './src', './vendor' ],
 				'xcode_settings': {
 					'GCC_ENABLE_CPP_EXCEPTIONS': 'YES',
 					'GCC_GENERATE_DEBUGGING_SYMBOLS': 'YES',
-					'CLANG_CXX_LANGUAGE_STANDARD': 'c++17',
+					'CLANG_CXX_LANGUAGE_STANDARD': 'c++20',
 					'MACOSX_DEPLOYMENT_TARGET': '10.12',
 				},
 				'msvs_settings': {
 					'VCCLCompilerTool': {
-						'AdditionalOptions': [ '-std:c++17', '/GR' ],
+						'AdditionalOptions': [ '-std:c++20' ],
 						'ExceptionHandling': '1',
 					},
 				},
@@ -50,9 +50,18 @@
 			'xcode_settings': {
 				'GCC_ENABLE_CPP_RTTI': 'YES',
 			},
-			'msvs_settings': {
-				'VCCLCompilerTool': {
-					'RuntimeTypeInfo': 'true',
+			# nb: For whatever reason this msvs setting cannot be inherited and must be directly set on
+			# each target
+			'configurations': {
+				'Debug': {
+					'msvs_settings': {
+						'VCCLCompilerTool': { 'RuntimeTypeInfo': 'true' },
+					},
+				},
+				'Release': {
+					'msvs_settings': {
+						'VCCLCompilerTool': { 'RuntimeTypeInfo': 'true' },
+					},
 				},
 			},
 			'conditions': [
@@ -65,7 +74,7 @@
 				'src/external_copy/string.cc',
 				'src/isolate/allocator_nortti.cc',
 				'src/isolate/environment.cc',
-				"src/isolate/cpu_profile_manager.cc",
+				'src/isolate/cpu_profile_manager.cc',
 				'src/isolate/executor.cc',
 				'src/isolate/holder.cc',
 				'src/isolate/inspector.cc',
@@ -106,15 +115,6 @@
 				'src/external_copy/serializer_nortti.cc',
 				'src/isolate/allocator_nortti.cc',
 			],
-		},
-		{
-			'target_name': 'action_after_build',
-			'type': 'none',
-			'dependencies': [ 'isolated_vm' ],
-			'copies': [ {
-				'files': [ '<(PRODUCT_DIR)/isolated_vm.node' ],
-				'destination': 'out',
-			} ],
 		},
 	],
 }

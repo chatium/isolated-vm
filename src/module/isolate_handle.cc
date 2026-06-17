@@ -39,9 +39,13 @@ auto IsolateHandle::IsolateHandleTransferable::TransferIn() -> Local<Value> {
 
 IsolateHandle::IsolateHandle(shared_ptr<IsolateHolder> isolate) : isolate(std::move(isolate)) {}
 
+static std::unique_ptr<ClassHandle> IsolateHandle_New_Wrapper(v8::MaybeLocal<v8::Object> options) {
+	return IsolateHandle::New(options);
+}
+
 auto IsolateHandle::Definition() -> Local<FunctionTemplate> {
 	return Inherit<TransferableHandle>(MakeClass(
-	 "Isolate", ConstructorFunction<decltype(&New), &New>{},
+		"Isolate", ConstructorFunction<decltype(&IsolateHandle_New_Wrapper), &IsolateHandle_New_Wrapper>{},
 		"createSnapshot", FreeFunction<decltype(&CreateSnapshot), &CreateSnapshot>{},
 		"compileScript", MemberFunction<decltype(&IsolateHandle::CompileScript<1>), &IsolateHandle::CompileScript<1>>{},
 		"compileScriptSync", MemberFunction<decltype(&IsolateHandle::CompileScript<0>), &IsolateHandle::CompileScript<0>>{},
@@ -139,7 +143,7 @@ struct CreateContextRunner : public ThreePhaseTask {
 	void Phase2() final {
 		// Use custom deleter on the shared_ptr which will notify the isolate when we're probably done with this context
 		struct ContextDeleter {
-			void operator() (Persistent<Context>& context) const {
+			void operator() (v8::Persistent<Context>& context) const {
 				auto& env = IsolateEnvironment::GetCurrent();
 				context.Reset();
 				env.GetIsolate()->ContextDisposedNotification();
@@ -483,16 +487,24 @@ auto IsolateHandle::CreateSnapshot(ArrayRange script_handles, MaybeLocal<String>
 			}
 
 			// Methods for v8::TaskRunner
-			void PostTask(std::unique_ptr<v8::Task> task) final {
+			void PostTaskImpl(std::unique_ptr<v8::Task> task, const v8::SourceLocation& /*location*/) final {
 				tasks.write()->push_back(std::move(task));
 			}
-			void PostDelayedTask(std::unique_ptr<v8::Task> task, double /*delay_in_seconds*/) final {
+			void PostDelayedTaskImpl(std::unique_ptr<v8::Task> task, double /*delay_in_seconds*/, const v8::SourceLocation& location) final {
 				if (!done) {
+#if V8_AT_LEAST(13, 3, 241)
+					PostTask(std::move(task), location);
+#else
 					PostTask(std::move(task));
+#endif
 				}
 			}
-			void PostNonNestableTask(std::unique_ptr<v8::Task> task) final {
-				PostTask(std::move(task));
+			void PostNonNestableTaskImpl(std::unique_ptr<v8::Task> task, const v8::SourceLocation& location) final {
+#if V8_AT_LEAST(13, 3, 241)
+					PostTask(std::move(task), location);
+#else
+					PostTask(std::move(task));
+#endif
 			}
 
 		private:
