@@ -6,9 +6,17 @@ const logs = [];
 context.evalClosureSync(
   `
   const context = $0;
+  const promiseIds = new WeakMap();
+  let nextPromiseId = 1;
   function prepareArg(arg) {
     if (Array.isArray(arg)) {
       return '[' + arg.map(prepareArg).join(',') + ']'
+    }
+    if (arg instanceof Promise) {
+      if (!promiseIds.has(arg)) {
+        promiseIds.set(arg, nextPromiseId++);
+      }
+      return 'Promise#' + promiseIds.get(arg);
     }
     return arg?.toString() ?? String(arg);
   }
@@ -42,24 +50,24 @@ process.nextTick(() => {});
 isolate.dispose();
 const expectedLogs =  [
   [ 'before main()' ],
-  [ 'init_hook', '[[object Promise],undefined]' ],
+  [ 'init_hook', '[Promise#1,undefined]' ],
   [ 'before await 1' ],
-  [ 'init_hook', '[[object Promise],[object Promise]]' ],
-  [ 'init_hook', '[[object Promise],[object Promise]]' ],
-  [ 'resolve_hook', '[[object Promise]]' ],
+  [ 'init_hook', '[Promise#2,Promise#1]' ],
+  [ 'resolve_hook', '[Promise#2]' ],
+  [ 'init_hook', '[Promise#3,Promise#2]' ],
   [ 'after main()' ],
-  [ 'before hook', '[[object Promise]]' ],
+  [ 'before hook', '[Promise#3]' ],
   [ 'before await 2' ],
-  [ 'init_hook', '[[object Promise],[object Promise]]' ],
-  [ 'init_hook', '[[object Promise],[object Promise]]' ],
-  [ 'resolve_hook', '[[object Promise]]' ],
-  [ 'resolve_hook', '[[object Promise]]' ],
-  [ 'after hook', '[[object Promise]]' ],
-  [ 'before hook', '[[object Promise]]' ],
+  [ 'init_hook', '[Promise#4,Promise#1]' ],
+  [ 'resolve_hook', '[Promise#4]' ],
+  [ 'init_hook', '[Promise#5,Promise#4]' ],
+  [ 'resolve_hook', '[Promise#3]' ],
+  [ 'after hook', '[Promise#3]' ],
+  [ 'before hook', '[Promise#5]' ],
   [ 'after await 2' ],
-  [ 'resolve_hook', '[[object Promise]]' ],
-  [ 'resolve_hook', '[[object Promise]]' ],
-  [ 'after hook', '[[object Promise]]' ]
+  [ 'resolve_hook', '[Promise#1]' ],
+  [ 'resolve_hook', '[Promise#5]' ],
+  [ 'after hook', '[Promise#5]' ]
 ]
 assert.deepStrictEqual(logs, expectedLogs)
 console.log('pass')
