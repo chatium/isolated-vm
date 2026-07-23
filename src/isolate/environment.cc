@@ -275,6 +275,23 @@ void IsolateEnvironment::AsyncEntry() {
 		}
 	}
 
+	// `Runnable::Run()` is invoked at the top of this worker thread, so any C++ exception that
+	// escapes it (e.g. a `FatalRuntimeError` raised by a heap check when the isolate is over its
+	// memory limit) would propagate out of the thread function and abort the entire process via
+	// `std::terminate`. Well-behaved runnables convert their errors internally; this guard is a
+	// safety net so a single misbehaving task can never take down the host process. It should not
+	// fire in normal operation, so — unlike the expected, high-frequency memory-limit path handled
+	// inside the runnables themselves — anything caught here is logged for visibility.
+	auto run_task_guarded = [](Runnable& task) {
+		try {
+			task.Run();
+		} catch (const detail::RuntimeErrorWithMessage& err) {
+			fprintf(stderr, "isolated-vm[guard]: swallowed error escaping isolate task loop: %s\n", err.GetMessage().c_str());
+		} catch (const RuntimeError&) {
+			fprintf(stderr, "isolated-vm[guard]: swallowed runtime error escaping isolate task loop\n");
+		}
+	};
+
 	while (true) {
 		std::queue<unique_ptr<Runnable>> tasks;
 		std::queue<unique_ptr<Runnable>> handle_tasks;
@@ -293,19 +310,19 @@ void IsolateEnvironment::AsyncEntry() {
 
 		// Execute interrupt tasks
 		while (!interrupts.empty()) {
-			interrupts.front()->Run();
+			run_task_guarded(*interrupts.front());
 			interrupts.pop();
 		}
 
 		// Execute handle tasks
 		while (!handle_tasks.empty()) {
-			handle_tasks.front()->Run();
+			run_task_guarded(*handle_tasks.front());
 			handle_tasks.pop();
 		}
 
 		// Execute tasks
 		while (!tasks.empty()) {
-			tasks.front()->Run();
+			run_task_guarded(*tasks.front());
 			tasks.pop();
 			if (terminated) {
 				return;

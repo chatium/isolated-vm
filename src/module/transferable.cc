@@ -116,13 +116,31 @@ class TransferablePromiseHolder final : public ClassHandle {
 				resolver{std::move(resolver)}, value{std::move(value)}, did_throw{did_throw} {}
 
 			void Run() final {
-				auto context = this->resolver.Deref<1>();
-				Context::Scope context_scope{context};
-				auto resolver = this->resolver.Deref<0>();
-				if (did_throw) {
-					Unmaybe(resolver->Reject(context, value->TransferIn()));
-				} else {
-					Unmaybe(resolver->Resolve(context, value->TransferIn()));
+				// `value->TransferIn()` copies the settled value into the receiving isolate via
+				// `ExternalCopy::CopyIntoCheckHeap`, whose heap check throws `FatalRuntimeError` when
+				// that isolate is over its `memoryLimit`. This task is executed directly from the
+				// isolate's task loop (`IsolateEnvironment::AsyncEntry`) which has no exception guard,
+				// so an escaping exception here would propagate out of the worker thread and abort the
+				// whole process via `std::terminate`. When this happens the isolate has already been
+				// terminated/disposed and the resolver is moot, so it is safe to swallow the error.
+				try {
+					auto context = this->resolver.Deref<1>();
+					Context::Scope context_scope{context};
+					auto resolver = this->resolver.Deref<0>();
+					if (did_throw) {
+						Unmaybe(resolver->Reject(context, value->TransferIn()));
+					} else {
+						Unmaybe(resolver->Resolve(context, value->TransferIn()));
+					}
+				} catch (const RuntimeError&) {
+					// Isolate hit its memory limit or was terminated while delivering the promise
+					// result (`HeapCheck::Epilogue` sets `hit_memory_limit`/`Terminate()` *before* it
+					// throws, so the isolate is already being torn down and the resolver is moot).
+					// Swallowing here matches how isolated-vm already handles `FatalRuntimeError`
+					// elsewhere (see `RunBarrier` / `RunCatchValue`, "Fatal errors are swallowed").
+					// This is silent on purpose: it fires per-promise under memory pressure, and the
+					// host observes the failure via the disposed isolate (the enclosing call rejects
+					// with "Isolate was disposed…", which the caller logs and acts on).
 				}
 			}
 
