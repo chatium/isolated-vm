@@ -69,6 +69,10 @@ struct timer_data_t {
 
 namespace {
 
+// Build-identification marker: `strings isolated_vm.node | grep isolated-vm\\[timer` confirms a
+// deployed binary contains the iterative timer-drain fix (see maybe_run_next below).
+__attribute__((used)) const char timer_drain_marker[] = "isolated-vm[timer-iterative-drain]";
+
 /**
  * Stash these here in case statics are destroyed while the module is unloading but timers are still
  * active
@@ -97,7 +101,7 @@ struct timer_thread_t {
 			std::this_thread::sleep_until(next_timeout);
 			lock.lock();
 			next_timeout = std::chrono::steady_clock::now();
-			run_next(lock);
+			maybe_run_next(lock);
 			if (queue.empty()) {
 				auto ii = shared_state->threads.find(this);
 				assert(ii != shared_state->threads.end());
@@ -111,37 +115,44 @@ struct timer_thread_t {
 		}
 	}
 
+	// Iterative on purpose. Timers whose `timer_t` handle was destroyed before their timeout
+	// (`is_alive == false`) stay queued until that timeout expires, so a burst of short-lived
+	// invocations with long timeouts leaves thousands of dead entries that all come due at
+	// once — recursing per entry (run_next -> maybe_run_next -> run_next) overflows the timer
+	// thread's stack (128 KB by default on musl).
 	void maybe_run_next(std::unique_lock<std::mutex>& lock) {
-		if (!queue.empty() && queue.top()->timeout <= next_timeout) {
-			run_next(lock);
+		while (!queue.empty() && queue.top()->timeout <= next_timeout) {
+			if (run_next(lock)) {
+				// A callback was dispatched; it continues draining via `timer_t::chain`.
+				return;
+			}
 		}
 	}
 
-	void run_next(std::unique_lock<std::mutex>& lock) {
+	// Returns true if a callback was dispatched
+	auto run_next(std::unique_lock<std::mutex>& lock) -> bool {
 		auto data = queue.top();
 		queue.pop();
-		{
-			if (data->is_alive) {
-				if (data->is_paused()) {
-					data->threadless_self = std::move(data);
-				} else if (data->adjust()) {
-					start_or_join_timer(std::move(data), lock);
-				} else {
-					data->is_running = true;
-					lock.unlock();
-					data->callback(reinterpret_cast<void*>(this));
-					lock.lock();
-					data->is_running = false;
-					if (data->is_dtor_waiting) {
-						shared_state->cv.notify_all();
-					}
-					return;
-				}
+		if (data->is_alive) {
+			if (data->is_paused()) {
+				data->threadless_self = std::move(data);
+			} else if (data->adjust()) {
+				start_or_join_timer(std::move(data), lock);
 			} else {
-				data.reset();
+				data->is_running = true;
+				lock.unlock();
+				data->callback(reinterpret_cast<void*>(this));
+				lock.lock();
+				data->is_running = false;
+				if (data->is_dtor_waiting) {
+					shared_state->cv.notify_all();
+				}
+				return true;
 			}
+		} else {
+			data.reset();
 		}
-		maybe_run_next(lock);
+		return false;
 	}
 
 	// Requires lock
