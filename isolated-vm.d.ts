@@ -252,6 +252,16 @@ declare namespace IsolatedVM {
 			after_hook: PromiseHookAfter,
 			resolve_hook: PromiseHookResolve,
 		): void
+
+		/**
+		 * Creates and returns a native function that returns the nanoseconds elapsed since its creation
+		 * as a number, read from a monotonic clock (`std::chrono::steady_clock`: wall time, not thread
+		 * CPU time). Integers stay exact for 104 days. No global is defined; keep the returned function
+		 * away from untrusted code if a high-resolution timer must not be exposed to it.
+		 * Intended to run inside eval() of this Context, when this context passed as argument (throws
+		 * when called from another isolate).
+		 */
+		installClockSync(): () => number;
 	}
 
 	/**

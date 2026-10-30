@@ -34,6 +34,19 @@ class ContextHandle : public TransferableHandle {
             v8::Local<v8::Function> resolve_hook
         ) -> void;
 
+		/**
+		 * Creates and returns a native function that returns the nanoseconds elapsed since its own
+		 * creation as a `Number`, read from `std::chrono::steady_clock` (monotonic wall time, not thread
+		 * CPU time). The base time is kept in the function's data, so every returned function counts
+		 * from the moment it was created. Nothing is defined on the global object: the caller decides
+		 * who can reach the function.
+		 *
+		 * Calling contract (same as `setPromiseHooksSync`): call it from inside this context's own
+		 * isolate, e.g. from `evalClosure` with the context passed in as an argument. The context is
+		 * dereferenced on the calling thread; calling it from another isolate throws.
+		 */
+		auto InstallClock() -> v8::Local<v8::Value>;
+
 	private:
 		RemoteHandle<v8::Context> context;
 		RemoteHandle<v8::Value> global;

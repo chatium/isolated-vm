@@ -4,6 +4,8 @@
 #include "context_handle.h"
 #include "reference_handle.h"
 #include "transferable.h"
+#include <chrono>
+#include <cstdint>
 
 using namespace v8;
 
@@ -27,6 +29,21 @@ class ContextHandleTransferable : public Transferable {
 		RemoteHandle<v8::Value> global;
 };
 
+auto SteadyClockNowNs() -> int64_t {
+	return std::chrono::duration_cast<std::chrono::nanoseconds>(
+		std::chrono::steady_clock::now().time_since_epoch()
+	).count();
+}
+
+/**
+ * Body of the function returned by `installClockSync()`. The function's data holds the steady clock
+ * reading taken when the function was created, as a BigInt so the base stays exact.
+ */
+void ClockCallback(const FunctionCallbackInfo<Value>& info) {
+	auto base = info.Data().As<BigInt>()->Int64Value();
+	info.GetReturnValue().Set(static_cast<double>(SteadyClockNowNs() - base));
+}
+
 } // anonymous namespace
 
 /**
@@ -45,6 +62,7 @@ auto ContextHandle::Definition() -> Local<FunctionTemplate> {
 		"evalClosureIgnored", MemberFunction<decltype(&ContextHandle::EvalClosure<2>), &ContextHandle::EvalClosure<2>>{},
 		"evalClosureSync", MemberFunction<decltype(&ContextHandle::EvalClosure<0>), &ContextHandle::EvalClosure<0>>{},
 		"setPromiseHooksSync", MemberFunction<decltype(&ContextHandle::SetPromiseHooks<0>), &ContextHandle::SetPromiseHooks<0>>{},
+		"installClockSync", MemberFunction<decltype(&ContextHandle::InstallClock), &ContextHandle::InstallClock>{},
 		"global", MemberAccessor<decltype(&ContextHandle::GlobalGetter), &ContextHandle::GlobalGetter>{},
 		"release", MemberFunction<decltype(&ContextHandle::Release), &ContextHandle::Release>{}
 	));
@@ -61,6 +79,23 @@ auto ContextHandle::SetPromiseHooks(
         throw RuntimeGenericError("Context is released");
     }
     context.Deref()->SetPromiseHooks(init_hook, before_hook, after_hook, resolve_hook);
+}
+
+auto ContextHandle::InstallClock() -> Local<Value> {
+	if (!context) {
+		throw RuntimeGenericError("Context is released");
+	}
+	if (context.GetIsolateHolder() != IsolateHolder::GetCurrent().get()) {
+		throw RuntimeGenericError("installClockSync must be called from inside the context's own isolate");
+	}
+	auto* isolate = Isolate::GetCurrent();
+	auto base = BigInt::New(isolate, SteadyClockNowNs());
+	// A plain function, not a FunctionTemplate: V8 would cache a template's instantiation in the native context for
+	// the context's whole life, one per call
+	return Unmaybe(Function::New(
+		context.Deref(), ClockCallback, base, 0,
+		ConstructorBehavior::kThrow, SideEffectType::kHasNoSideEffect
+	));
 }
 
 auto ContextHandle::TransferOut() -> std::unique_ptr<Transferable> {
