@@ -70,8 +70,13 @@ struct timer_data_t {
 namespace {
 
 // Build-identification marker: `strings isolated_vm.node | grep isolated-vm\\[timer` confirms a
-// deployed binary contains the iterative timer-drain fix (see maybe_run_next below).
+// deployed binary contains the iterative timer-drain fix (see maybe_run_next below). MSVC has no
+// `used` attribute, so a Windows build may drop the marker; the fix itself is unaffected.
+#if defined(_MSC_VER) && !defined(__clang__)
+const char timer_drain_marker[] = "isolated-vm[timer-iterative-drain]";
+#else
 __attribute__((used)) const char timer_drain_marker[] = "isolated-vm[timer-iterative-drain]";
+#endif
 
 /**
  * Stash these here in case statics are destroyed while the module is unloading but timers are still
