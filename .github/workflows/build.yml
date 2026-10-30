@@ -8,7 +8,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ ubuntu-latest, macos-latest, windows-latest ]
+        # No macos-latest: hosted macOS runners are often unavailable and too slow for the timing
+        # tests (large-strings.js); run `CI=1 npm test` on a Mac locally instead
+        os: [ ubuntu-latest, windows-latest ]
         node: [ 22, 24 ]
       fail-fast: false
     steps:
@@ -25,8 +27,14 @@ jobs:
         run: |
           npm install --global node-gyp@latest
       - name: Build
+        if: matrix.os != 'windows-latest'
         run: |
           npm install --build-from-source
+      # npm's install script runs the node-gyp npm bundles, and Node 22's (11.5) cannot find VS 18
+      - name: Build (global node-gyp)
+        if: matrix.os == 'windows-latest'
+        run: |
+          npm install --ignore-scripts && node "$(npm prefix -g)\node_modules\node-gyp\bin\node-gyp.js" rebuild --release -j max
       - name: Test
         uses: nick-fields/retry@v3
         with:
